@@ -5,7 +5,7 @@ import numpy as np
 from image_sampler import ImageSampler
 
 
-class AttentionCNN:
+class Model:
     def __init__(self, image_shape,
                  nb_classes,
                  alpha=1.,
