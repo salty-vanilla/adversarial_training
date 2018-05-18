@@ -209,8 +209,8 @@ class Model:
             x_batch = x[iter_ * batch_size: (iter_ + 1) * batch_size]
             y_batch = y[iter_ * batch_size: (iter_ + 1) * batch_size]
             l, a = self.evaluate_on_batch(x_batch, y_batch)
-            loss = np.append(loss, l.reshape(1, 1) * len(x_batch), axis=0)
-            acc = np.append(acc, a.reshape(1, 1) * len(x_batch), axis=0)
+            loss = np.append(loss, l * len(x_batch))
+            acc = np.append(acc, a * len(x_batch))
         loss = np.sum(loss) / len(x)
         acc = np.sum(acc) / len(x)
         return acc
@@ -228,7 +228,7 @@ class Model:
             if isinstance(x_batch, list):
                 x_batch = x_batch[0]
             o = self.predict_on_batch(x_batch)
-            pred = np.append(pred, o, axis=0)
+            pred = np.append(pred, o)
         return pred
 
     def evaluate_generator(self, image_sampler):
