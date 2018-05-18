@@ -213,6 +213,7 @@ class ArrayIterator(Iterator):
                                               target_size=self.target_size,
                                               normalize_mode=self.normalize_mode)
                                 for x in self.x[index_array]])
+
         if self.y is not None:
             label_batch = self.y[index_array]
             return image_batch, label_batch
@@ -278,8 +279,8 @@ def preprocessing(x, target_size=None, color_mode='rgb', normalize_mode='tanh'):
 
     image_array = normalize(image_array, normalize_mode)
 
-    if color_mode in ['grayscale', 'gray']:
-        image_array = image_array.reshape(image.size[1], image.size[0], 1)
+    if len(image_array.shape) == 2:
+        image_array = np.expand_dims(image_array, axis=-1)
     return image_array
 
 

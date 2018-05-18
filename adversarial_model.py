@@ -24,14 +24,27 @@ class Model:
                                    is_training=False,
                                    reuse=True)
 
-        with tf.variable_scope('loss'):
+        with tf.name_scope('regularization'):
+            softmax_loss = tf.nn.softmax_cross_entropy_with_logits(
+                logits=self.__call__(self.image,
+                                     is_training=False,
+                                     reuse=True),
+                labels=self.label
+            )
+            self.x_hat = self.image + epsilon * tf.sign(tf.gradients(softmax_loss, self.image))[0]
+            regularization_term = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
+                logits=self.__call__(self.x_hat,
+                                     is_training=False,
+                                     reuse=True),
+                labels=self.label))
+
+        with tf.variable_scope('softmax'):
             with tf.variable_scope('train'):
                 self.softmax_loss_train = tf.reduce_mean(
                     tf.nn.softmax_cross_entropy_with_logits(
                         logits=self.y_train,
                         labels=self.label
                     ))
-                regularization_term = self.compute_regularization_term(epsilon)
                 self.loss_train = self.softmax_loss_train
                 if not alpha == 0.:
                     self.loss_train += alpha*regularization_term
@@ -42,7 +55,6 @@ class Model:
                         logits=self.y_val,
                         labels=self.label
                     ))
-                regularization_term = self.compute_regularization_term(epsilon)
                 self.loss_val = self.softmax_loss_val
                 if not alpha == 0.:
                     self.loss_val += alpha*regularization_term
@@ -101,7 +113,7 @@ class Model:
             assert len(val_x) == len(val_y)
             valid_sampler = ImageSampler(None,
                                          normalize_mode=None,
-                                         is_training=False).flow(x, y, batch_size, shuffle=False)
+                                         is_training=False).flow(val_x, val_y, batch_size, shuffle=False)
         else:
             valid_sampler = None
         self.fit_generator(image_sampler,
@@ -179,12 +191,12 @@ class Model:
         return self.saver.restore(self.sess, model_path)
 
     def predict(self, x, batch_size=16):
-        pred = np.empty([0, 1])
+        pred = np.empty([0, self.nb_classes])
         steps_per_epoch = len(x) // batch_size if len(x) % batch_size == 0 \
             else len(x) // batch_size + 1
         for iter_ in range(steps_per_epoch):
             x_batch = x[iter_ * batch_size: (iter_ + 1) * batch_size]
-            o, att = self.predict_on_batch(x_batch)
+            o = self.predict_on_batch(x_batch)
             pred = np.append(pred, o, axis=0)
         return pred
 
@@ -196,11 +208,11 @@ class Model:
         for iter_ in range(steps_per_epoch):
             x_batch = x[iter_ * batch_size: (iter_ + 1) * batch_size]
             y_batch = y[iter_ * batch_size: (iter_ + 1) * batch_size]
-            l, a, att = self.evaluate_on_batch(x_batch, y_batch)
-            loss = np.append(loss, l * len(x_batch), axis=0)
-            acc = np.append(acc, a * len(x_batch), axis=0)
-        loss /= len(x)
-        acc /= len(x)
+            l, a = self.evaluate_on_batch(x_batch, y_batch)
+            loss = np.append(loss, l.reshape(1, 1) * len(x_batch), axis=0)
+            acc = np.append(acc, a.reshape(1, 1) * len(x_batch), axis=0)
+        loss = np.sum(loss) / len(x)
+        acc = np.sum(acc) / len(x)
         return acc
 
     def predict_generator(self, image_sampler):
@@ -215,7 +227,7 @@ class Model:
         for x_batch in image_sampler():
             if isinstance(x_batch, list):
                 x_batch = x_batch[0]
-            o, att = self.predict_on_batch(x_batch)
+            o = self.predict_on_batch(x_batch)
             pred = np.append(pred, o, axis=0)
         return pred
 
@@ -231,7 +243,7 @@ class Model:
         if nb_sample % batch_size != 0:
             steps_per_epoch += 1
         for x_batch, y_batch in image_sampler():
-            l, a, att = self.evaluate_on_batch(x_batch, y_batch)
+            l, a = self.evaluate_on_batch(x_batch, y_batch)
             loss = np.append(loss, l * len(x_batch))
             acc = np.append(acc, a * len(x_batch))
 
@@ -239,8 +251,12 @@ class Model:
         acc = sum(acc) / nb_sample
         return loss, acc
 
-    def predict_on_batch(self, x):
-        return self.sess.run(self.y_val,
+    def predict_on_batch(self, x, apply_softmax=True):
+        if apply_softmax:
+            y = tf.nn.softmax(self.y_val)
+        else:
+            y = self.y_val
+        return self.sess.run(y,
                              feed_dict={self.image: x})
 
     def evaluate_on_batch(self, x, y):
@@ -248,13 +264,19 @@ class Model:
                              feed_dict={self.image: x,
                                         self.label: y})
 
-    def compute_regularization_term(self, epsilon=0.05):
-        softmax_loss = tf.nn.softmax_cross_entropy_with_logits(
-            logits=self.__call__(self.image, is_training=False, reuse=True),
-            labels=self.label
-        )
-        x_hat = self.image + epsilon * tf.sign(tf.gradients(softmax_loss, self.image))
-        return tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
-            logits=self.__call__(x_hat, is_training=False, reuse=True),
-            labels=self.label
-        ))
+    def generate_adversarial_examples(self, x, y, batch_size=16):
+        advs = np.empty([0, *self.image_shape])
+
+        steps_per_epoch = len(x) // batch_size if len(x) % batch_size == 0 \
+            else len(x) // batch_size + 1
+        for iter_ in range(steps_per_epoch):
+            x_batch = x[iter_ * batch_size: (iter_ + 1) * batch_size]
+            y_batch = y[iter_ * batch_size: (iter_ + 1) * batch_size]
+            adv = self.generate_adversarial_examples_on_batch(x_batch, y_batch)
+            advs = np.append(advs, adv, axis=0)
+        return advs
+
+    def generate_adversarial_examples_on_batch(self, x, y):
+        return self.sess.run(self.x_hat,
+                             feed_dict={self.image: x,
+                                        self.label: y})
